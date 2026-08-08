@@ -42,18 +42,13 @@ absent from Trixie and Trixie-backports.
    treat both as leads to verify, not settled facts: first, since
    `libspooles-dev` is also absent from Trixie, you'd need to rebuild
    `spooles` *before* `calculix-ccx` — two source packages, not one.
-   Second, Debian's `calculix-ccx` 2.21-1 `debian/rules` does add
-   `-fallow-argument-mismatch` to `FFLAGS` (the same GCC-14 Fortran fix as
-   workaround 2 below, confirming it's a genuine toolchain issue and not
-   something specific to a manual build) and one of its four patches adds
-   explicit prototypes to fix an implicit-function-declaration error (a
-   targeted version of workaround 3) — but nothing in the patch set or
-   rules file visibly addresses the return-mismatch/int-conversion/
-   incompatible-pointer-types errors or the `-lgfortran` linking problem
-   (workarounds 3's remainder and workaround 4). Whether that means they
-   aren't hit on Debian's exact build, or the package's GCC 14 build health
-   is itself an open question, we could not confirm without attempting the
-   rebuild.
+   Second, Debian's `calculix-ccx` 2.21-1 `debian/rules` adds
+   `-fallow-argument-mismatch` to `FFLAGS` — needed for **2.21**'s Fortran
+   sources, but measurably NOT needed for 2.23 (see workaround 2 below:
+   upstream cleaned these up between 2.21 and 2.23) — and one of its four
+   patches adds explicit prototypes to fix an implicit-function-declaration
+   error. Whether Debian's 2.21 build hits the other GCC-14 C errors we
+   could not confirm without attempting the rebuild.
 2. **Pull the forky/sid package directly** (add that suite and pin
    `calculix-ccx` + `spooles` from it on an otherwise-Trixie system).
    Works, but drags a newer-release dependency chain onto a stable(-ish)
@@ -62,7 +57,7 @@ absent from Trixie and Trixie-backports.
 3. **Build from the publisher's source — this repository.** The right
    choice when you specifically need **2.23**, newer than Debian's current
    2.21-1 (Debian's own package tracker flags 2.23 as a newer upstream
-   version not yet packaged). This is where the four GCC-14 workarounds
+   version not yet packaged). This is where the three workarounds
    below are load-bearing, and they're verified end-to-end because this is
    the exact build we performed: on a Raspberry Pi 5, building
    **CalculiX CrunchiX 2.23** together with **SPOOLES 2.2** (built from
@@ -120,8 +115,9 @@ fails fast with a clear message if they're missing.
 ```bash
 git clone https://github.com/karolfurtak/calculix-arm64-debian-build.git
 cd calculix-arm64-debian-build
-chmod +x build-calculix-arm64.sh
-./build-calculix-arm64.sh
+chmod +x build-calculix-arm64.sh verify-calculix-arm64.sh
+./build-calculix-arm64.sh          # add --no-install to build without sudo
+./verify-calculix-arm64.sh         # then PROVE the binary computes correctly
 ```
 
 The script:
@@ -135,12 +131,19 @@ The script:
    a checksum doesn't match, the build aborts. It does not continue with an
    unverified archive.
 4. Builds SPOOLES 2.2, applying workaround 1 below.
-5. Builds CalculiX 2.23, applying workarounds 2–4 below.
-6. Installs the resulting binary to `/usr/bin/ccx` (`root:root`, `755`).
+5. Builds CalculiX 2.23, applying workarounds 2–3 below.
+6. Installs the resulting binary to `/usr/bin/ccx` (`root:root`, `755`) —
+   or leaves it in the build directory if you pass `--no-install` (no sudo
+   needed then).
 7. Runs `ccx -v` and checks the output — fails if the binary doesn't run or
-   reports an unexpected version.
+   reports an unexpected version. (Judged by the printed version string:
+   `ccx -v` exits with a non-zero status code even on success.)
 8. Removes the scratch build directory (pass `--keep-build-dir` to keep it
    for inspection, or `--build-dir DIR` to choose its location).
+
+A binary that builds and starts is **not** yet evidence that it computes
+correctly — after building, run the verification suite:
+see [Verifying computational correctness](#verifying-computational-correctness).
 
 Expected result:
 
@@ -166,12 +169,15 @@ If CalculiX ever publishes a newer version, update the version/URL/checksum
 constants at the top of the script — and re-verify the new hash against an
 independent source (e.g. the Homebrew formula above) before trusting it.
 
-## The four workarounds
+## The three workarounds
 
 Building 20+ year old Fortran/C on a 2026-era Debian toolchain (GCC 14) hits
-four specific problems. Each one is applied automatically by the script;
+three specific problems. Each fix is applied automatically by the script;
 they're documented here so you understand what it's doing to the sources
-before you run it.
+before you run it. Each was verified to be **minimal**: a clean-room build
+with pristine flags and `make -k` (keep going past errors, to collect all of
+them) was run on Debian 13/arm64 specifically to enumerate what actually
+fails — see the evidence notes in each subsection.
 
 ### 1. SPOOLES 2.2 source tarball references a file that doesn't exist
 
@@ -189,53 +195,142 @@ This is a known defect in the SPOOLES 2.2 distribution itself (also noted in
 CalculiX's own installation notes), not something introduced by Debian or by
 this script.
 
-### 2. `-fallow-argument-mismatch` for GCC 14
-
-GCC 10 and later reject Fortran argument-type mismatches (e.g. passing a
-`REAL` where a `REAL*8` is expected) as hard errors by default. CalculiX's
-Fortran 77-era code relies on such mismatches throughout — without
-`-fallow-argument-mismatch -fallow-invalid-boz` added to `FFLAGS`,
-compilation fails on the first mismatched call.
-
-### 3. `-Wno-error=return-mismatch` and related flags for GCC 14
+### 2. `-Wno-error=return-mismatch` for GCC 14 — one benign hit
 
 GCC 14 promoted several C diagnostics from warnings to hard errors by
-default: return-type mismatches, implicit function declarations, implicit
-int conversions, and incompatible pointer types. CalculiX's C sources trip
-several of these — for example `readnewmesh.c:468` does `return NULL;`
-inside a function declared `void`. The value is harmless (it's discarded by
-the caller either way), but GCC 14 now stops the build over it. Fix: add
-`-Wno-error=return-mismatch -Wno-error=implicit-function-declaration
--Wno-error=int-conversion -Wno-error=incompatible-pointer-types
--Wno-error=implicit-int` to `CFLAGS`.
-
-### 4. Remove the unneeded `-lgfortran` from `LIBS`
-
-The stock CalculiX `Makefile` expects a locally-built ARPACK at
-`../../../ARPACK/libarpack_INTEL.a`, which this procedure does not build —
-it links against the Debian `libarpack2-dev` / `libopenblas-dev` packages
-instead (`-larpack -llapack -lblas`). Some build guides also add
-`-lgfortran` explicitly to `LIBS` at this point — don't. `$(FC)` (gfortran)
-already links `libgfortran` implicitly. Adding it explicitly breaks the
-build, because GNU Make's implicit rule for resolving `-lNAME`
-prerequisites only searches `.`, `/lib`, `/usr/lib`, and `/usr/local/lib` —
-not the multiarch directory (`/usr/lib/gcc/aarch64-linux-gnu/14/`) where
-`libgfortran.so` actually lives on this system:
+default (return-type mismatches, implicit function declarations, implicit
+int conversions, incompatible pointer types). For CalculiX **2.23**, exactly
+**one** of them fires, in exactly **one** place:
 
 ```
-make: *** No rule to make target '-lgfortran'
+readnewmesh.c:468:10: error: 'return' with a value, in function returning void [-Wreturn-mismatch]
 ```
+
+That line is `return NULL;` at the end of a `void` multithreading helper —
+the returned value is discarded, so the code's behaviour is unaffected;
+only the diagnostic's severity changed in GCC 14. Fix: add
+`-Wno-error=return-mismatch` to `CFLAGS` (this demotes it back to the
+warning it was before GCC 14 — the warning still prints).
+
+**Evidence this is minimal:** the clean-room `make -k` build compiled the
+entire C codebase with pristine `CFLAGS` and produced exactly one error —
+the line above. The broader flag batch that circulates in build guides
+(`-Wno-error=implicit-function-declaration -Wno-error=int-conversion
+-Wno-error=incompatible-pointer-types -Wno-error=implicit-int`) is **not
+needed** for 2.23, so this script does not apply it — silencing compiler
+checks that never fire would only mask future problems.
+
+**What about `-fallow-argument-mismatch`?** Widely recommended for CalculiX
+(and genuinely required for older releases such as the 2.21 that Debian
+packages — Debian's own `debian/rules` adds it), this flag turns Fortran
+argument-type/rank mismatches between a call and the called routine from
+errors back into warnings. Such mismatches in a finite element solver would
+be a real correctness concern — passing a `REAL*4` where `REAL*8` is
+expected can silently corrupt numbers, which is why we tested rather than
+assumed: the clean-room build compiled **every Fortran source file of 2.23
+with pristine `FFLAGS`, without a single argument-mismatch diagnostic**
+(gfortran 14.2.0 checks these within each compilation unit). Upstream
+cleaned these up by 2.23. This script therefore leaves `FFLAGS` untouched —
+no Fortran checks are silenced at all.
+
+### 3. Replace the multi-line `LIBS` block (system ARPACK, no `-lgfortran`)
+
+The stock CalculiX `Makefile` defines `LIBS` as a **multi-line block** with
+backslash continuations, pointing at a locally-built ARPACK:
+
+```make
+LIBS = \
+       $(DIR)/spooles.a \
+	../../../ARPACK/libarpack_INTEL.a \
+       -lpthread -lm -lc
+```
+
+This procedure does not build a local ARPACK — it links against the Debian
+`libarpack2-dev` / `libopenblas-dev` packages instead (`-larpack -llapack
+-lblas`). Two traps here, both verified by hitting them:
+
+- **The whole continuation block must be replaced as a unit.** A naive
+  `sed 's/^LIBS.*=.*/LIBS = .../'` replaces only the first line (`LIBS = \`)
+  and leaves the orphaned continuation lines behind; `make` then dies at
+  parse time with `Makefile:24: *** missing separator.  Stop.` The script
+  uses a sed *range* (`/^LIBS[[:space:]]*=/,/[^\\]$/`) that spans the block
+  to its last line (the first one not ending in a backslash), and asserts
+  afterwards that the replacement took effect.
+- **Do not add `-lgfortran`** (some build guides suggest it). `$(FC)`
+  (gfortran) already links `libgfortran` implicitly. Adding it explicitly
+  breaks the build, because the Makefile uses `$(LIBS)` both as linker
+  arguments *and* as Make prerequisites, and GNU Make's library search for
+  `-lNAME` prerequisites does not look in the GCC-internal directory
+  (`/usr/lib/gcc/aarch64-linux-gnu/14/`) where `libgfortran.so` lives:
+
+  ```
+  make: *** No rule to make target '-lgfortran'
+  ```
 
 ## Result
 
-Verified on Raspberry Pi 5, Debian 13 Trixie, aarch64:
+Verified on Raspberry Pi 5, Debian 13 Trixie, aarch64 — by running this
+exact script end-to-end (`--no-install --build-dir …`), not a manual
+approximation of it:
 
 | Metric | Value |
 |---|---|
 | `ccx -v` | `This is Version 2.23` |
-| Binary | `/usr/bin/ccx`, ELF aarch64, ~5.5 MB, not stripped |
+| Binary | ELF aarch64, ~5.5 MB, not stripped |
 | Build time (`make -j4`, 4 cores) | ~5 minutes total (SPOOLES ~1 min, CalculiX ~4 min) |
 | Scratch disk usage during build | ~67 MB, removed after install |
+| Verification suite | see next section |
+
+## Verifying computational correctness
+
+**Why this section exists.** This build demotes one compiler error back to a
+warning (workaround 2). For a solver whose output people may use for
+strength assessment, the worst failure mode is not a crash — it is a result
+that *looks* plausible and is wrong. A binary that builds and prints its
+version number proves nothing about the numbers it computes. The only
+meaningful evidence is comparing its results against the reference
+solutions published by the CalculiX author — so this repository ships a
+second script that does exactly that:
+
+```bash
+./verify-calculix-arm64.sh                # verifies /usr/bin/ccx
+./verify-calculix-arm64.sh --ccx PATH     # verifies any ccx binary
+```
+
+It downloads the official CalculiX 2.23 verification suite
+(`ccx_2.23.test.tar.bz2` from dhondt.de, SHA-256 checked against the same
+independent source as the build inputs), runs all ~630 example problems
+(35–40 min on a Pi 5, single-threaded by upstream's design), and compares
+every `.dat`/`.frd` output numerically against the reference results using
+upstream's own `datcheck.pl`/`frdcheck.pl` tolerances and NaN checks.
+
+**Measured result on Raspberry Pi 5 (Debian 13, aarch64), binary built by
+this script:** 633 examples executed, **597 fully clean (94.3%)**, 36
+flagged by upstream's comparison, all in these categories:
+
+| Category | Count | Assessment |
+|---|---|---|
+| Missing `.ref` file in the upstream archive (`*.rfn.dat.ref`) | 4 | Defect of the test archive, not of the binary — the reference file simply is not shipped. |
+| Pure sign flip (computed value equal in magnitude, opposite sign) | 4 | Eigenvectors/mode shapes: **v** and **−v** are both mathematically valid solutions of an eigenproblem; the sign is arbitrary and platform-dependent. |
+| Small numeric deviations (~0.1–10% of the block maximum) | 14 | Consistent with different BLAS/architecture rounding on iterative/nonlinear problems; **not independently confirmed as benign** — see honesty note below. |
+| Output file missing or its length differs from reference | 14 | Typically a different iteration count changes how many lines land in `.dat`; **not independently confirmed as benign** — see honesty note below. |
+
+**Honesty note — read before trusting results.** The upstream reference
+files were generated on the author's x86-64 machine; the suite is known not
+to compare bit-identically across platforms/BLAS builds even for correct
+binaries. We did **not** have an x86-64 baseline run to separate
+"ARM64-specific deviation" from "any modern rebuild deviates here". What we
+can honestly state: 94% of the examples agree with the published reference
+results within upstream's own tolerances, the remainder falls into the
+categories above, and the discrepancy report was **byte-for-byte identical**
+for two independently compiled binaries (different diagnostic flag sets,
+same sources, same machine) — which points at platform/library arithmetic,
+not at this build procedure. If your
+work depends on one of the flagged analysis types (see
+`verify-calculix-arm64.sh` output for the exact example names — e.g. tied
+contact `beamptied*`, substructures, sensitivity `sens_*`), validate that
+feature against a known solution or a trusted x86-64 CalculiX before
+relying on it.
 
 ## Licensing of components
 
@@ -272,7 +367,8 @@ redistributing anything you build.
 ## Continuous integration
 
 CI runs [ShellCheck](https://www.shellcheck.net/) static analysis against
-`build-calculix-arm64.sh` on every push and pull request.
+both shell scripts (`build-calculix-arm64.sh`, `verify-calculix-arm64.sh`)
+on every push and pull request.
 
 It does **not** actually run the build on ARM64. GitHub-hosted Actions
 runners are Ubuntu-based, not Debian, and the point of this procedure is
@@ -280,9 +376,11 @@ specifically the package/toolchain combination on Debian 13 Trixie —
 running it on a different distribution wouldn't validate the thing this
 repository is about, and would add a slow, resource-heavy job for
 comparatively little assurance. If you want to verify the build itself,
-run the script on real Debian 13 ARM64 hardware (or a matching container)
-and check `ccx -v`. This is stated here explicitly rather than left
-implied by a CI badge that only proves the shell syntax is clean.
+run the script on real Debian 13 ARM64 hardware (or a matching container),
+then run `verify-calculix-arm64.sh` against the produced binary (see
+[Verifying computational correctness](#verifying-computational-correctness)).
+This is stated here explicitly rather than left implied by a CI badge that
+only proves the shell syntax is clean.
 
 ## License
 
@@ -306,6 +404,18 @@ repozytorium zawiera skrypt budujący **CalculiX CrunchiX 2.23** ze źródeł
 zweryfikowany na Raspberry Pi 5 (Debian 13 Trixie) — budowa trwa ok. 5
 minut. Skrypt pobiera źródła bezpośrednio od wydawców i weryfikuje sumy
 kontrolne SHA-256 przed budową; przerywa działanie przy niezgodności.
+
+**Poprawność obliczeń, nie tylko kompilacja:** budowa wymaga zdegradowania
+jednej kontroli kompilatora GCC 14 z błędu do ostrzeżenia (pojedyncze,
+nieszkodliwe `return NULL;` w funkcji `void` — wartość jest odrzucana).
+Żadna kontrola Fortranu nie jest wyciszana (sprawdzono budową bez obejść:
+zero niezgodności argumentów w 2.23). Drugi skrypt,
+`verify-calculix-arm64.sh`, uruchamia oficjalny zestaw ~630 zadań
+weryfikacyjnych autora CalculiX i porównuje wyniki liczbowo z wynikami
+referencyjnymi — szczegóły i uczciwe omówienie odchyłek w sekcji
+*Verifying computational correctness*. Binarka, która się uruchamia, nie
+jest jeszcze dowodem, że liczy poprawnie — uruchom weryfikację.
+
 Repozytorium **nie zawiera** ani binarki `ccx`, ani kodu źródłowego
 CalculiX/SPOOLES — to świadoma decyzja: CalculiX jest na licencji GPL w
 wersji 2, a publikacja skompilowanej binarki wymagałaby udostępnienia

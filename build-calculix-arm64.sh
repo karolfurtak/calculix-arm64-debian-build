@@ -12,11 +12,15 @@
 # examples/docs but no solver binary). This script reproduces a build that
 # was verified on a Raspberry Pi 5 (Debian 13 Trixie, aarch64) in ~5 minutes.
 #
-# See README.md for the four upstream/toolchain workarounds this script
-# applies, and why each one is necessary on GCC 14 / Debian 13.
+# See README.md for the three upstream/toolchain workarounds this script
+# applies, and why each one is necessary on GCC 14 / Debian 13. Each
+# workaround was verified to be the MINIMAL set needed: a clean-room build
+# without them fails on exactly the spots they address, and with them the
+# full CalculiX verification suite was run against the resulting binary
+# (see "Verifying computational correctness" in README.md).
 #
 # Usage:
-#   ./build-calculix-arm64.sh [--keep-build-dir] [--build-dir DIR]
+#   ./build-calculix-arm64.sh [--keep-build-dir] [--build-dir DIR] [--no-install]
 #
 # Exit codes: non-zero on any failure (checksum mismatch, missing
 # dependency, compile/link failure). The script does not continue silently
@@ -46,6 +50,7 @@ SPOOLES_SHA256="a84559a0e987a1e423055ef4fdf3035d55b65bbe4bf915efaa1a35bef7f8c5dd
 
 BUILD_DIR="${BUILD_DIR:-$HOME/build-ccx}"
 KEEP_BUILD_DIR=0
+NO_INSTALL=0
 INSTALL_PATH="/usr/bin/ccx"
 JOBS="$(nproc 2>/dev/null || echo 2)"
 
@@ -57,7 +62,7 @@ log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$1"; }
 die()  { printf '\n\033[1;31mERROR:\033[0m %s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'EOF'
-Usage: build-calculix-arm64.sh [--keep-build-dir] [--build-dir DIR]
+Usage: build-calculix-arm64.sh [--keep-build-dir] [--build-dir DIR] [--no-install]
 
 Builds CalculiX CrunchiX 2.23 + SPOOLES 2.2 from source and installs the
 resulting solver to /usr/bin/ccx. See README.md for details.
@@ -65,6 +70,9 @@ resulting solver to /usr/bin/ccx. See README.md for details.
   --keep-build-dir   do not delete the scratch build directory on exit
   --build-dir DIR    use DIR instead of $HOME/build-ccx as the scratch
                       build directory (must not already exist)
+  --no-install       build only; skip the sudo install to /usr/bin/ccx and
+                      leave the binary in the build directory (implies
+                      --keep-build-dir)
   -h, --help         show this help and exit
 EOF
 }
@@ -79,6 +87,11 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "--build-dir requires an argument"
       BUILD_DIR="$2"
       shift 2
+      ;;
+    --no-install)
+      NO_INSTALL=1
+      KEEP_BUILD_DIR=1
+      shift
       ;;
     -h|--help)
       usage
@@ -173,7 +186,7 @@ sed -i 's|CFLAGS = \$(OPTLEVEL)$|CFLAGS = \$(OPTLEVEL) -fcommon -fPIC -std=gnu89
 # not exist in the tarball. The actual file is draw.c. Without this fix,
 # `make global` fails with:
 #   make: *** No rule to make target 'drawTree.o'
-log "Workaround 1/4: fixing SPOOLES Tree/src/makeGlobalLib (drawTree.c -> draw.c)"
+log "Workaround 1/3: fixing SPOOLES Tree/src/makeGlobalLib (drawTree.c -> draw.c)"
 sed -i 's/drawTree\.c/draw.c/' Tree/src/makeGlobalLib
 
 log "Building SPOOLES (make global)"
@@ -195,65 +208,85 @@ cd "$CCX_SRC_DIR" || die "could not enter $CCX_SRC_DIR"
 
 log "Patching CalculiX Makefile for GCC 14 and system ARPACK/BLAS/LAPACK"
 
-# Workaround 2: GCC >= 10 rejects Fortran argument type mismatches (common
-# throughout CalculiX's Fortran 77-era code) as hard errors by default.
-# Without -fallow-argument-mismatch (and -fallow-invalid-boz), compilation
-# of the Fortran sources fails.
-echo "Workaround 2/4: adding -fallow-argument-mismatch -fallow-invalid-boz to FFLAGS"
-if grep -q '^FFLAGS' Makefile; then
-  sed -i 's/^FFLAGS[[:space:]]*=.*/&  -fallow-argument-mismatch -fallow-invalid-boz/' Makefile
-else
-  die "could not find FFLAGS in Makefile — upstream layout may have changed"
-fi
-
-# Workaround 3: GCC 14 promoted several C diagnostics from warnings to hard
-# errors by default (return-type mismatch, implicit function declaration,
-# implicit int conversion, incompatible pointer types). CalculiX's C sources
-# trip several of these, e.g. readnewmesh.c:468 returns NULL from a function
-# declared void. The values themselves are harmless/discarded; without these
-# flags the build aborts on the first such file.
-echo "Workaround 3/4: adding -Wno-error=return-mismatch and related flags to CFLAGS"
+# Workaround 2: GCC 14 treats a `return` with a value inside a `void`
+# function as a hard error (-Wreturn-mismatch was promoted to an error).
+# CalculiX 2.23 trips this in exactly ONE place: readnewmesh.c:468 does
+# `return NULL;` at the end of a void multithreading helper — the value is
+# discarded, so the code is harmless; only the diagnostic severity changed.
+# Evidence that this is the MINIMAL C workaround: a clean-room build on
+# Debian 13/arm64 with pristine CFLAGS and `make -k` produced exactly one
+# error in the entire C codebase (readnewmesh.c:468) and none elsewhere,
+# so the broader -Wno-error=implicit-function-declaration/int-conversion/
+# incompatible-pointer-types/implicit-int batch recommended by some guides
+# is NOT needed for 2.23 and is deliberately not applied here.
+# Note on Fortran: -fallow-argument-mismatch, widely recommended for older
+# CalculiX releases, is NOT needed for 2.23 either — the same clean-room
+# build compiled every Fortran source without a single argument-mismatch
+# diagnostic, so this script leaves FFLAGS untouched.
+echo "Workaround 2/3: adding -Wno-error=return-mismatch to CFLAGS (single benign hit: readnewmesh.c:468)"
 if grep -q '^CFLAGS' Makefile; then
-  sed -i 's/^CFLAGS[[:space:]]*=.*/&  -Wno-error=return-mismatch -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=implicit-int/' Makefile
+  sed -i 's/^CFLAGS[[:space:]]*=.*/&  -Wno-error=return-mismatch/' Makefile
 else
   die "could not find CFLAGS in Makefile — upstream layout may have changed"
 fi
 
-# Workaround 4: the stock Makefile points LIBS at a locally-built ARPACK
+# Workaround 3: the stock Makefile defines LIBS as a MULTI-LINE block
+# (backslash continuations) pointing at a locally-built ARPACK
 # (../../../ARPACK/libarpack_INTEL.a), which this script does not build —
 # it uses the Debian libarpack2-dev / libopenblas-dev packages instead.
-# Adding -lgfortran explicitly (as some guides suggest) breaks the build:
-# GNU Make's implicit rule for "-lNAME" prerequisites only searches
-# '.', /lib, /usr/lib, /usr/local/lib — not the multiarch directory
-# (/usr/lib/gcc/aarch64-linux-gnu/14/) where libgfortran.so actually lives
-# on this system, so Make reports:
+# The whole continuation block must be replaced as a unit: replacing only
+# the first `LIBS = \` line (as a naive `sed s/^LIBS=.*/.../` does) leaves
+# the orphaned continuation lines behind and make dies at parse time with
+#   Makefile:24: *** missing separator.  Stop.
+# The address range /^LIBS/,/[^\\]$/ spans from the LIBS line to the first
+# line that does NOT end in a backslash, i.e. the entire block.
+# Also: do NOT add -lgfortran here (some guides suggest it). LIBS is used
+# both as linker arguments and as Make prerequisites; GNU Make's library
+# search for "-lNAME" prerequisites does not look in the GCC-internal
+# directory (/usr/lib/gcc/aarch64-linux-gnu/14/) where libgfortran.so
+# lives, so make reports:
 #   make: *** No rule to make target '-lgfortran'
 # $(FC) (gfortran) already links libgfortran implicitly — do not add it.
-echo "Workaround 4/4: pointing LIBS at system ARPACK/BLAS/LAPACK, no explicit -lgfortran"
+echo "Workaround 3/3: replacing the multi-line LIBS block with system ARPACK/BLAS/LAPACK"
 if grep -q '^LIBS' Makefile; then
-  sed -i "s|^LIBS[[:space:]]*=.*|LIBS = \$(DIR)/spooles.a -larpack -llapack -lblas -lpthread -lm -lc|" Makefile
+  sed -i -e '/^LIBS[[:space:]]*=/,/[^\\]$/c\LIBS = $(DIR)/spooles.a -larpack -llapack -lblas -lpthread -lm -lc' Makefile
 else
   die "could not find LIBS in Makefile — upstream layout may have changed"
 fi
+grep -q '^LIBS = \$(DIR)/spooles.a -larpack' Makefile \
+  || die "LIBS replacement did not take effect — upstream Makefile layout may have changed"
 
 log "Building CalculiX (make -j${JOBS} ccx_${CCX_VERSION})"
 make -j"${JOBS}" "ccx_${CCX_VERSION}" || die "CalculiX build failed"
 [[ -f "ccx_${CCX_VERSION}" ]] || die "build did not produce ccx_${CCX_VERSION}"
 
 # ---------------------------------------------------------------------------
-# Step 3 — install
+# Step 3 — install (or report, with --no-install)
 # ---------------------------------------------------------------------------
 
-log "Installing to ${INSTALL_PATH} (requires sudo)"
-sudo cp "ccx_${CCX_VERSION}" "$INSTALL_PATH"
-sudo chmod 755 "$INSTALL_PATH"
-sudo chown root:root "$INSTALL_PATH"
-
-log "Verifying installation"
-if ! OUT="$("$INSTALL_PATH" -v 2>&1)"; then
-  die "installed binary failed to run: $OUT"
+if [[ "$NO_INSTALL" == "1" ]]; then
+  BINARY_PATH="$CCX_SRC_DIR/ccx_${CCX_VERSION}"
+else
+  log "Installing to ${INSTALL_PATH} (requires sudo)"
+  sudo cp "ccx_${CCX_VERSION}" "$INSTALL_PATH"
+  sudo chmod 755 "$INSTALL_PATH"
+  sudo chown root:root "$INSTALL_PATH"
+  BINARY_PATH="$INSTALL_PATH"
 fi
-echo "$OUT"
-echo "$OUT" | grep -q "Version ${CCX_VERSION}" || die "unexpected version output: $OUT"
 
-log "Done. CalculiX CrunchiX ${CCX_VERSION} installed at ${INSTALL_PATH}."
+log "Verifying the binary starts and reports the right version"
+# Note: `ccx -v` exits with a NON-ZERO status (201) even on success, so the
+# exit code must not be treated as failure — judge by the output instead.
+OUT="$("$BINARY_PATH" -v 2>&1 || true)"
+echo "$OUT"
+echo "$OUT" | grep -q "Version ${CCX_VERSION}" \
+  || die "unexpected version output from ${BINARY_PATH}: $OUT"
+
+if [[ "$NO_INSTALL" == "1" ]]; then
+  log "Done. Binary built (not installed): ${BINARY_PATH}"
+else
+  log "Done. CalculiX CrunchiX ${CCX_VERSION} installed at ${INSTALL_PATH}."
+fi
+echo "A binary that starts is not yet proof it computes correctly."
+echo "Run ./verify-calculix-arm64.sh to check it against the official"
+echo "CalculiX verification suite (~630 reference problems, ~35 min on a Pi 5)."
