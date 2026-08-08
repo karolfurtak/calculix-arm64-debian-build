@@ -19,11 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This license applies only to the build script and documentation contained in
-this repository. It does not apply to, and grants no rights in, CalculiX,
-SPOOLES, ARPACK, or OpenBLAS, which this script downloads and compiles but
-which this repository does not redistribute. See the "Licensing of
-components" section in README.md for the licenses governing those projects.
