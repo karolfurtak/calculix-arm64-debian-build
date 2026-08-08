@@ -343,16 +343,16 @@ but you should know what you're building under:
 - **CalculiX CrunchiX** — [GNU General Public License v2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html).
   Source: [dhondt.de/ccx.html](http://www.dhondt.de/ccx.html) /
   [calculix.de](http://www.calculix.de/).
-- **SPOOLES 2.2** — released into the **public domain** by its authors; the
-  license file bundled in the source archive states "this release is
-  entirely within the public domain; there are no licensing restrictions,
-  and there is no warranty of any sort" (cross-checked against Debian's
-  `spooles` source package copyright file — Debian ships SPOOLES in its
-  `main` archive area, which only accepts DFSG-compliant licenses, so
-  public domain checks out; it is simply absent from Trixie specifically,
-  see [The problem](#the-problem)). Read the license file included in the
-  SPOOLES source archive itself before redistributing anything built with
-  it. Source:
+- **SPOOLES 2.2** — released into the **public domain** by its authors.
+  The source archive ships no standalone license file; the statement lives
+  in the bundled Reference Manual
+  (`documentation/ReferenceManual/main.tex`): "This release of the package
+  is totally within the public domain; there are absolutely no licensing
+  restrictions as with other software packages." (Cross-checked against
+  Debian's `spooles` source package — Debian ships SPOOLES in its `main`
+  archive area, which only accepts DFSG-compliant licenses, so public
+  domain checks out; it is simply absent from Trixie specifically, see
+  [The problem](#the-problem).) Source:
   [netlib.org/linalg/spooles](https://www.netlib.org/linalg/spooles/).
 - **ARPACK** (via Debian's `libarpack2-dev`, packaged as arpack-ng) —
   [BSD 3-Clause License](https://github.com/opencollab/arpack-ng/blob/master/COPYING).
