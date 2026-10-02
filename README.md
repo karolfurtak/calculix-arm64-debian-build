@@ -384,14 +384,7 @@ only proves the shell syntax is clean.
 
 ## License
 
-This repository's script and documentation are released under the
-[MIT License](LICENSE) — permissive and effectively frictionless to reuse,
-appropriate for a short automation script whose value is in being copied,
-adapted, and redistributed by anyone who hits the same ARM64 packaging gap.
-It applies **only** to the contents of this repository (the script and this
-documentation); it says nothing about, and grants no rights to, CalculiX,
-SPOOLES, ARPACK, or OpenBLAS themselves — see
-[Licensing of components](#licensing-of-components) above.
+Copyright (c) 2026 Karol Furtak. **All rights reserved.** Commercial use, copying, distribution and modification only with the author's written permission — see [LICENSE](LICENSE). Viewing the code on GitHub does not grant a licence. It applies **only** to the contents of this repository; it says nothing about, and grants no rights to, CalculiX, SPOOLES, ARPACK, or OpenBLAS themselves — see [Licensing of components](#licensing-of-components) above.
 
 ---
 
@@ -419,7 +412,7 @@ jest jeszcze dowodem, że liczy poprawnie — uruchom weryfikację.
 Repozytorium **nie zawiera** ani binarki `ccx`, ani kodu źródłowego
 CalculiX/SPOOLES — to świadoma decyzja: CalculiX jest na licencji GPL w
 wersji 2, a publikacja skompilowanej binarki wymagałaby udostępnienia
-odpowiadającego jej kodu źródłowego. Skrypt i dokumentacja własna są na
-licencji MIT (patrz [LICENSE](LICENSE)); nie dotyczy to licencji CalculiX,
+odpowiadającego jej kodu źródłowego. Skrypt i dokumentacja własna: wszelkie prawa
+zastrzeżone, zakaz użycia komercyjnego bez zgody autora (patrz [LICENSE](LICENSE)); nie dotyczy to licencji CalculiX,
 SPOOLES, ARPACK ani OpenBLAS — patrz sekcja *Licensing of components*
 wyżej.
